@@ -1,27 +1,31 @@
-name: Register Component in Port Catalog
+name: Register CI Job in Port Catalog
 
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
 
 jobs:
-  register-component:
+  register-ci-job:
     runs-on: ubuntu-latest
     steps:
-      - name: Register component in Port
+      - name: Register CI Job in Port
         uses: port-labs/port-github-action@v1
         with:
-          clientId: ${{ secrets.CLIENT_ID }}
-          clientSecret: ${{ secrets.CLIENT_SECRET }}
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
           baseUrl: https://api.getport.io
           operation: UPSERT
-          identifier: myComponent
-          blueprint: CI jobs
-          icon: myIcon
-          team: "['myTeam']"
+          identifier: ${{ github.workflow }}-${{ github.run_id }}
+          blueprint: ci-job
+          icon: "Server"
           properties: |
             {
-              "version": "${{ github.sha }}",
-              "buildTime": "${{ github.event.head_commit.timestamp }}"
+              "jobName": "${{ github.workflow }}",
+              "status": "${{ job.status }}",
+              "duration": "${{ steps.duration.outputs.time }}",
+              "runId": "${{ github.run_id }}",
+              "commitSha": "${{ github.sha }}",
+              "repository": "${{ github.repository }}"
             }
