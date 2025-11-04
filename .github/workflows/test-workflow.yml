@@ -2,7 +2,7 @@ name: Register CI Job in Port Catalog
 
 on:
   workflow_dispatch:
-  
+
   workflow_run:
     workflows: ["CI Pipeline"]
     types:
@@ -25,8 +25,8 @@ jobs:
           properties: |
             {
               "jobName": "${{ github.workflow }}",
-              "status": "${{ job.status }}",
-              "duration": "${{ steps.duration.outputs.time }}",
+              "status": "${{ github.event.workflow_run.conclusion }}",
+              "duration": "0",  // Replace with actual duration if available
               "runId": "${{ github.run_id }}",
               "commitSha": "${{ github.sha }}",
               "repository": "${{ github.repository }}"
