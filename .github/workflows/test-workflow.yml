@@ -26,7 +26,7 @@ jobs:
             {
               "jobName": "${{ github.workflow }}",
               "status": "${{ github.event.workflow_run.conclusion }}",
-              "duration": "0",  // Replace with actual duration if available
+              "duration": "0",
               "runId": "${{ github.run_id }}",
               "commitSha": "${{ github.sha }}",
               "repository": "${{ github.repository }}"
