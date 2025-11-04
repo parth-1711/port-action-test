@@ -19,7 +19,7 @@ jobs:
           clientSecret: ${{ secrets.CLIENT_SECRET }}
           baseUrl: https://api.getport.io
           operation: UPSERT
-          identifier: ${{ github.workflow }}-${{ github.run_id }}
+          identifier: port-action-${{ github.run_id }}
           blueprint: ci-job
           icon: "Server"
           properties: |
