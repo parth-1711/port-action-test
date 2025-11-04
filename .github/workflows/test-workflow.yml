@@ -17,7 +17,7 @@ jobs:
           baseUrl: https://api.getport.io
           operation: UPSERT
           identifier: myComponent
-          blueprint: myBlueprint
+          blueprint: CI jobs
           icon: myIcon
           team: "['myTeam']"
           properties: |
