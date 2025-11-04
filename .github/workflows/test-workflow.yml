@@ -15,8 +15,8 @@ jobs:
       - name: Register CI Job in Port
         uses: port-labs/port-github-action@v1
         with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          clientId: ${{ secrets.CLIENT_ID }}
+          clientSecret: ${{ secrets.CLIENT_SECRET }}
           baseUrl: https://api.getport.io
           operation: UPSERT
           identifier: ${{ github.workflow }}-${{ github.run_id }}
