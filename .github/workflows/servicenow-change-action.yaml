@@ -166,3 +166,28 @@ jobs:
       - name: Final summary
         run: |
           echo "Change: ${{ steps.create_change.outputs.change_number }} (sys_id=${{ steps.create_change.outputs.change_sys_id }})" >> "$GITHUB_STEP_SUMMARY"
+      
+      - name: Send final log to Port
+        if: ${{ inputs.port_run_id != '' }}
+        shell: bash
+        run: |
+          BASE_URL="${PORT_BASE_URL:-https://api.port.io}"
+          TOKEN=$(curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\":\"${{ secrets.PORT_CLIENT_ID }}\",\"clientSecret\":\"${{ secrets.PORT_CLIENT_SECRET }}\"}" \
+            "${BASE_URL}/v1/auth/access_token" | jq -r '.accessToken')
+      
+          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
+            echo "::error::Failed to get Port token"
+            exit 1
+          fi
+      
+          MSG="Workflow completed
+          Change: ${{ steps.create_change.outputs.change_number }} (sys_id=${{ steps.create_change.outputs.change_sys_id }})
+          GitHub Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          "
+      
+          curl -sS -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -n --arg m "$MSG" --arg t "SUCCESS" --arg l "COMPLETED" '{message:$m, terminationStatus:$t, statusLabel:$l}')" \
