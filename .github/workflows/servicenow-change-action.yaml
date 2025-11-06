@@ -170,24 +170,45 @@ jobs:
       - name: Send final log to Port
         if: ${{ inputs.port_run_id != '' }}
         shell: bash
+        env:
+          # Inputs / secrets
+          PORT_RUN_ID: ${{ inputs.port_run_id }}
+          PORT_CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          PORT_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          # Optional repo variable for US region: set PORT_BASE_URL=https://api.us.port.io
+          PORT_BASE_URL: ${{ vars.PORT_BASE_URL }}
         run: |
-          BASE_URL="${PORT_BASE_URL:-https://api.port.io}"
-          TOKEN=$(curl -sS -X POST \
-            -H "Content-Type: application/json" \
-            -d "{\"clientId\":\"${{ secrets.PORT_CLIENT_ID }}\",\"clientSecret\":\"${{ secrets.PORT_CLIENT_SECRET }}\"}" \
-            "${BASE_URL}/v1/auth/access_token" | jq -r '.accessToken')
+          set -euo pipefail
       
-          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-            echo "::error::Failed to get Port token"
+          BASE_URL="${PORT_BASE_URL:-https://api.port.io}"
+      
+          # 1) Get Port access token
+          TOKEN_RESP=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg id "$PORT_CLIENT_ID" --arg sec "$PORT_CLIENT_SECRET" '{clientId:$id, clientSecret:$sec}')" \
+            "${BASE_URL}/v1/auth/access_token")
+          TOKEN_BODY=$(sed '$d' <<< "$TOKEN_RESP")
+          TOKEN_CODE=$(tail -n1 <<< "$TOKEN_RESP")
+          TOKEN=$(jq -r '.accessToken // empty' <<< "$TOKEN_BODY")
+      
+          if [[ "$TOKEN_CODE" != "200" || -z "$TOKEN" ]]; then
+            echo "::group::Port token error details"
+            echo "$TOKEN_BODY" | jq . || echo "$TOKEN_BODY"
+            echo "::endgroup::"
+            echo "::error::Failed to obtain Port access token (HTTP $TOKEN_CODE)"
             exit 1
           fi
+          echo "::add-mask::$TOKEN"
       
-          MSG="Workflow completed
-          Change: ${{ steps.create_change.outputs.change_number }} (sys_id=${{ steps.create_change.outputs.change_sys_id }})
-          GitHub Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          "
+          # 2) Build message and termination
+          STATUS="SUCCESS"; LABEL="COMPLETED"
+          if [[ "${{ job.status }}" != "success" ]]; then STATUS="FAILURE"; LABEL="FAILED"; fi
       
+          MSG=$'Workflow completed\n'"Change: ${{ steps.create_change.outputs.change_number }} (sys_id=${{ steps.create_change.outputs.change_sys_id }})"$'\n'"GitHub Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+      
+          # 3) Send one final log to Port
           curl -sS -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
-            --data "$(jq -n --arg m "$MSG" --arg t "SUCCESS" --arg l "COMPLETED" '{message:$m, terminationStatus:$t, statusLabel:$l}')" \
+            --data "$(jq -n --arg m "$MSG" --arg t "$STATUS" --arg l "$LABEL" '{message:$m, terminationStatus:$t, statusLabel:$l}')" \
+            "${BASE_URL}/v1/actions/runs/${PORT_RUN_ID}/logs"
