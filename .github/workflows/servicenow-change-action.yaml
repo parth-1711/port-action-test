@@ -67,51 +67,49 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          # NOTE: On the change_request table, the “Planned start/end” labels map to fields
-          # start_date and end_date, while “Actual” map to work_start/work_end. [3](https://community.n8n.io/t/asynchronous-call-using-webhook/96275)
-          payload=$(jq -n --arg sd "${{ inputs.short_description }}" \
+      
+          payload=$(jq -n --arg sd   "${{ inputs.short_description }}" \
                          --arg desc "${{ inputs.description }}" \
-                         --arg ag "${{ inputs.assignment_group }}" \
+                         --arg ag   "${{ inputs.assignment_group }}" \
                          --arg prio "${{ inputs.priority }}" \
                          --arg start "${{ inputs.planned_start_date }}" \
                          --arg end   "${{ inputs.planned_end_date }}" '
             {
               short_description: $sd,
-              description: $desc,
-              assignment_group: $ag,
-              priority: $prio
+              description:       $desc,
+              assignment_group:  $ag,
+              priority:          $prio
             }
-            + ( ($start|length)>0 ? {start_date: $start} : {} )
-            + ( ($end  |length)>0 ? {end_date:  $end } : {} )
+            + ( if ($start|length) > 0 then {start_date: $start} else {} end )
+            + ( if ($end  |length) > 0 then {end_date:  $end } else {} end )
           ')
-
-          # Table API POST to change_request; we pass sysparm_input_display_value=true so
-          # choice/date inputs are handled as display values if provided as such. [4](https://www.servicenow.com/community/developer-forum/newbie-question-querying-change-request-table-with-rest-api/m-p/1483094)
+      
+          echo "Payload to ServiceNow:"
+          echo "$payload" | jq .
+      
           http_code=$(curl -sS -o resp.json -w "%{http_code}" \
             -H "Authorization: Basic ${SN_AUTH}" \
             -H "Content-Type: application/json" \
             "${SN_INSTANCE}/api/now/table/change_request?sysparm_input_display_value=true" \
             --data "${payload}")
-
+      
           if [[ "$http_code" != "200" && "$http_code" != "201" ]]; then
             echo "::error title=ServiceNow::Failed to create change (HTTP ${http_code})"
             cat resp.json || true
             exit 1
           fi
-
-          change_sys_id=$(jq -r '.result.sys_id' resp.json)
-          change_number=$(jq -r '.result.number' resp.json)
-
-          echo "change_sys_id=${change_sys_id}"   >> "$GITHUB_OUTPUT"
-          echo "change_number=${change_number}"   >> "$GITHUB_OUTPUT"
-
+      
+          change_sys_id=$(jq -r '.result.sys_id'  resp.json)
+          change_number=$(jq -r '.result.number'  resp.json)
+      
+          echo "change_sys_id=${change_sys_id}" >> "$GITHUB_OUTPUT"
+          echo "change_number=${change_number}" >> "$GITHUB_OUTPUT"
+      
           {
             echo "### Created Change"
             echo "- **Number**: ${change_number}"
             echo "- **sys_id**: \`${change_sys_id}\`"
           } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Create Change Tasks (if any)
         if: ${{ inputs.task_descriptions != '' }}
         id: create_tasks
