@@ -85,11 +85,11 @@ jobs:
               echo "Resolving assignment_group name '${ag_in}' to sys_id..."
               # Try exact name first
               q="name=$(python3 - <<'PY'
-      import urllib.parse,sys
-      print(urllib.parse.quote(sys.argv[1]))
-      PY
-      ${ag_in}
-      )"
+                import urllib.parse,sys
+                print(urllib.parse.quote(sys.argv[1]))
+                PY
+                ${ag_in}
+                )"
               resp_code=$(curl -sS -o ag.json -w "%{http_code}" \
                 -H "Authorization: Basic ${SN_AUTH}" \
                 -H "Accept: application/json" \
