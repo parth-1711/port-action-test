@@ -1,0 +1,16 @@
+name: Run On Change Tasks Completion
+
+on:
+  workflow_dispatch:
+    inputs:
+      change_number:
+        description: "ServiceNow Change Request Number"
+        required: true
+        type: string
+
+jobs:
+  run_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print the Change Request number
+        run: echo "Triggered for CR: ${{ github.event.inputs.change_number }}"
