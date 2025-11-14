@@ -31,37 +31,34 @@ jobs:
       PORT_RUN_ID:     ${{ inputs.port_run_id }}
 
     steps:
-      - name: Parse single payload (robust)
+      - name: Parse single payload (robust + normalization)
         id: parse
         shell: bash
+        env:
+          # Toggle this if your input gives a group *name* (e.g., "port") rather than sys_id.
+          RESOLVE_AG: "true"
         run: |
           set -euo pipefail
-          echo ${{ inputs.payload }}
+      
           RAW='${{ inputs.payload }}'
       
-          # 1) Ensure it's valid JSON of some type
+          # Ensure it's valid JSON (string token or object/array)
           echo "$RAW" | jq . >/dev/null
       
-          # 2) If RAW is a JSON *string*, decode it once (fromjson) to get the object
+          # If payload is a JSON *string*, decode once to get the object
           if jq -e 'type=="string"' >/dev/null 2>&1 <<<"$RAW"; then
             echo "Payload is a JSON string -> decoding with fromjson"
             RAW=$(jq -r 'fromjson' <<<"$RAW")
           fi
       
-          # 3) Optional: log keys to help debug (without showing secrets)
-          echo "Top-level keys in payload:"
-          echo "$RAW" | jq -r 'keys|.[]' | sed 's/^/- /'
-      
-          # 4) Extract fields
+          # ---- Extract as-is ----
           sd=$(jq -r '.short_description // empty' <<< "$RAW")
           desc=$(jq -r '.description // empty' <<< "$RAW")
-          ag=$(jq -r '.assignment_group // empty' <<< "$RAW")
-          prio=$(jq -r '.priority // empty' <<< "$RAW")
-          start=$(jq -r '.planned_start_date // empty' <<< "$RAW")
-          end=$(jq -r '.planned_end_date // empty' <<< "$RAW")
-          tasks=$(jq -c '.task_descriptions // []' <<< "$RAW")
+          ag_in=$(jq -r '.assignment_group // empty' <<< "$RAW")
+          prio_in=$(jq -r '.priority // empty' <<< "$RAW")
+          tasks_json=$(jq -c '.task_descriptions // []' <<< "$RAW")
       
-          # attachment_json is an OBJECT; if present, write it to file
+          # attachment_json (object) -> write compact JSON file for attachment
           if jq -e '.attachment_json' >/dev/null 2>&1 <<< "$RAW"; then
             jq -c '.attachment_json' <<< "$RAW" > attachment.json
             echo "have_attachment=true" >> "$GITHUB_OUTPUT"
@@ -69,15 +66,65 @@ jobs:
             echo "have_attachment=false" >> "$GITHUB_OUTPUT"
           fi
       
+          # ---- Normalize priority ----
+          # If value looks like "4 - Low" -> extract leading number; else keep as-is
+          prio_num=$(awk -F'[^0-9]*' '{print $1}' <<< "${prio_in}")
+          if [[ -z "${prio_num}" ]]; then
+            prio_norm="${prio_in}"
+          else
+            prio_norm="${prio_num}"
+          fi
+      
+          # ---- Optionally resolve assignment_group name -> sys_id ----
+          ag_out="${ag_in}"
+          # 32 hex chars is typical sys_id; if not, and resolution enabled, try lookup
+          if [[ "${RESOLVE_AG}" == "true" && "${#ag_in}" -ne 32 ]]; then
+            if [[ -z "${SN_INSTANCE:-}" || -z "${SN_AUTH:-}" ]]; then
+              echo "::warning::SN_INSTANCE/SN_AUTH not set; cannot resolve assignment_group name to sys_id."
+            else
+              echo "Resolving assignment_group name '${ag_in}' to sys_id..."
+              # Try exact name first
+              q="name=$(python3 - <<'PY'
+      import urllib.parse,sys
+      print(urllib.parse.quote(sys.argv[1]))
+      PY
+      ${ag_in}
+      )"
+              resp_code=$(curl -sS -o ag.json -w "%{http_code}" \
+                -H "Authorization: Basic ${SN_AUTH}" \
+                -H "Accept: application/json" \
+                "${SN_INSTANCE}/api/now/table/sys_user_group?sysparm_limit=1&sysparm_query=${q}")
+              if [[ "$resp_code" == "200" || "$resp_code" == "204" ]]; then
+                ag_sys=$(jq -r '.result[0].sys_id // empty' ag.json)
+                if [[ -n "$ag_sys" ]]; then
+                  ag_out="$ag_sys"
+                  echo "assignment_group resolved to sys_id=${ag_out}"
+                else
+                  echo "::warning::No sys_user_group found with name='${ag_in}'. Leaving as provided."
+                fi
+              else
+                echo "::warning::Failed to query sys_user_group (HTTP ${resp_code}); leaving assignment_group as provided."
+                cat ag.json || true
+              fi
+            fi
+          fi
+      
+          # ---- Debug (safe) ----
+          echo "Top-level keys in payload:"
+          echo "$RAW" | jq -r 'keys|.[]' | sed 's/^/- /'
+      
+          # ---- Export for next steps ----
           {
             echo "sd<<EOF";    echo "$sd";    echo "EOF"
             echo "desc<<EOF";  echo "$desc";  echo "EOF"
-            echo "ag=$ag"
-            echo "prio=$prio"
-            echo "start=$start"
-            echo "end=$end"
-            echo "tasks=$tasks"
+            echo "ag=$ag_out"
+            echo "prio=$prio_norm"
+            echo "tasks=$tasks_json"
+            # Optional dates if you add them later; export empty safely
+            echo "start=$(jq -r '.planned_start_date // empty' <<< "$RAW")"
+            echo "end=$(jq -r '.planned_end_date // empty' <<< "$RAW")"
           } >> "$GITHUB_OUTPUT"
+          
       - name: Create Change Request (ServiceNow)
         id: create_change
         shell: bash
