@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-      
+          echo ${{ inputs.payload }}
           RAW='${{ inputs.payload }}'
       
           # 1) Ensure it's valid JSON of some type
