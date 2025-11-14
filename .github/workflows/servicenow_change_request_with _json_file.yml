@@ -1,14 +1,14 @@
-name: Create ServiceNow Change with Tasks (single JSON payload)
+name: "Create ServiceNow Change + Tasks + attachment.json (from Port)"
 
 on:
   workflow_dispatch:
     inputs:
       payload:
-        description: "Stringified JSON from Port (.inputs)"
+        description: "Port action payload as JSON string"
         required: true
         type: string
       port_run_id:
-        description: "Port run id (for final log)"
+        description: "Port run id (opaque)"
         required: false
         type: string
 
@@ -17,208 +17,131 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     env:
-      # --- ServiceNow ---
-      SN_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE_URL }}   # e.g., https://yourinstance.service-now.com
-      SN_AUTH:     ${{ secrets.SERVICENOW_API_TOKEN }}       # Base64(username:password) for Basic auth
-
-      # --- Port (optional final log) ---
-      PORT_BASE_URL:   ${{ vars.PORT_BASE_URL }}             # EU default; for US set https://api.us.port.io
-      PORT_CLIENT_ID:  ${{ secrets.PORT_CLIENT_ID }}         # if using client-credentials
-      PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}  # if using client-credentials
-      PORT_JWT_TOKEN:  ${{ secrets.PORT_JWT_TOKEN }}         # if using GUI/PAT
-      PORT_RUN_ID:     ${{ inputs.port_run_id }}
-
+      SN_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE_URL }}
+      SN_AUTH: ${{ secrets.SERVICENOW_API_TOKEN }}
+    outputs:
+      change_number: ${{ steps.create_change.outputs.change_number }}
+      change_sys_id: ${{ steps.create_change.outputs.change_sys_id }}
     steps:
-      - name: Parse single payload (robust + normalization)
+      - name: Parse payload
         id: parse
         shell: bash
-        env:
-          # Toggle this if your input gives a group *name* (e.g., "port") rather than sys_id.
-          RESOLVE_AG: "true"
         run: |
           set -euo pipefail
-      
-          RAW='${{ inputs.payload }}'
-      
-          # Ensure it's valid JSON (string token or object/array)
-          echo "$RAW" | jq . >/dev/null
-      
-          # If payload is a JSON *string*, decode once to get the object
-          if jq -e 'type=="string"' >/dev/null 2>&1 <<<"$RAW"; then
-            echo "Payload is a JSON string -> decoding with fromjson"
-            RAW=$(jq -r 'fromjson' <<<"$RAW")
-          fi
-      
-          # ---- Extract as-is ----
-          sd=$(jq -r '.short_description // empty' <<< "$RAW")
-          desc=$(jq -r '.description // empty' <<< "$RAW")
-          ag_in=$(jq -r '.assignment_group // empty' <<< "$RAW")
-          prio_in=$(jq -r '.priority // empty' <<< "$RAW")
-          tasks_json=$(jq -c '.task_descriptions // []' <<< "$RAW")
-      
-          # attachment_json (object) -> write compact JSON file for attachment
-          if jq -e '.attachment_json' >/dev/null 2>&1 <<< "$RAW"; then
-            jq -c '.attachment_json' <<< "$RAW" > attachment.json
-            echo "have_attachment=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "have_attachment=false" >> "$GITHUB_OUTPUT"
-          fi
-      
-          # ---- Normalize priority ----
-          # If value looks like "4 - Low" -> extract leading number; else keep as-is
-          prio_num=$(awk -F'[^0-9]*' '{print $1}' <<< "${prio_in}")
-          if [[ -z "${prio_num}" ]]; then
-            prio_norm="${prio_in}"
-          else
-            prio_norm="${prio_num}"
-          fi
-      
-          # ---- Optionally resolve assignment_group name -> sys_id ----
-          ag_out="${ag_in}"
-          # 32 hex chars is typical sys_id; if not, and resolution enabled, try lookup
-          if [[ "${RESOLVE_AG}" == "true" && "${#ag_in}" -ne 32 ]]; then
-            if [[ -z "${SN_INSTANCE:-}" || -z "${SN_AUTH:-}" ]]; then
-              echo "::warning::SN_INSTANCE/SN_AUTH not set; cannot resolve assignment_group name to sys_id."
-            else
-              echo "Resolving assignment_group name '${ag_in}' to sys_id..."
-              # Try exact name first
-              q="name=$(python3 - <<'PY'
-                import urllib.parse,sys
-                print(urllib.parse.quote(sys.argv[1]))
-                PY
-                ${ag_in}
-                )"
-              resp_code=$(curl -sS -o ag.json -w "%{http_code}" \
-                -H "Authorization: Basic ${SN_AUTH}" \
-                -H "Accept: application/json" \
-                "${SN_INSTANCE}/api/now/table/sys_user_group?sysparm_limit=1&sysparm_query=${q}")
-              if [[ "$resp_code" == "200" || "$resp_code" == "204" ]]; then
-                ag_sys=$(jq -r '.result[0].sys_id // empty' ag.json)
-                if [[ -n "$ag_sys" ]]; then
-                  ag_out="$ag_sys"
-                  echo "assignment_group resolved to sys_id=${ag_out}"
-                else
-                  echo "::warning::No sys_user_group found with name='${ag_in}'. Leaving as provided."
-                fi
-              else
-                echo "::warning::Failed to query sys_user_group (HTTP ${resp_code}); leaving assignment_group as provided."
-                cat ag.json || true
-              fi
-            fi
-          fi
-      
-          # ---- Debug (safe) ----
-          echo "Top-level keys in payload:"
-          echo "$RAW" | jq -r 'keys|.[]' | sed 's/^/- /'
-      
-          # ---- Export for next steps ----
-          {
-            echo "sd<<EOF";    echo "$sd";    echo "EOF"
-            echo "desc<<EOF";  echo "$desc";  echo "EOF"
-            echo "ag=$ag_out"
-            echo "prio=$prio_norm"
-            echo "tasks=$tasks_json"
-            # Optional dates if you add them later; export empty safely
-            echo "start=$(jq -r '.planned_start_date // empty' <<< "$RAW")"
-            echo "end=$(jq -r '.planned_end_date // empty' <<< "$RAW")"
-          } >> "$GITHUB_OUTPUT"
-          
+          echo '${{ inputs.payload }}' > payload.json
+          jq . payload.json
+          # Extract values into GITHUB_OUTPUT as needed
+          sd=$(jq -r '.short_description' payload.json)
+          desc=$(jq -r '.description' payload.json)
+          ag=$(jq -r '.assignment_group' payload.json)
+          prio=$(jq -r '.priority' payload.json)
+          start=$(jq -r '.planned_start_date // empty' payload.json)
+          end=$(jq -r '.planned_end_date // empty' payload.json)
+          echo "short_description=$sd" >> "$GITHUB_OUTPUT"
+          echo "description=$desc" >> "$GITHUB_OUTPUT"
+          echo "assignment_group=$ag" >> "$GITHUB_OUTPUT"
+          echo "priority=$prio" >> "$GITHUB_OUTPUT"
+          echo "planned_start_date=$start" >> "$GITHUB_OUTPUT"
+          echo "planned_end_date=$end" >> "$GITHUB_OUTPUT"
+
       - name: Create Change Request (ServiceNow)
         id: create_change
         shell: bash
         run: |
           set -euo pipefail
           payload=$(jq -n \
-            --arg sd   "${{ steps.parse.outputs.sd }}" \
-            --arg desc "${{ steps.parse.outputs.desc }}" \
-            --arg ag   "${{ steps.parse.outputs.ag }}" \
-            --arg prio "${{ steps.parse.outputs.prio }}" \
-            --arg start "${{ steps.parse.outputs.start }}" \
-            --arg end   "${{ steps.parse.outputs.end }}" '
-            {
-              short_description: $sd,
-              description:       $desc,
-              assignment_group:  $ag,
-              priority:          $prio
-            }
-            + (if ($start|length)>0 then {start_date:$start} else {} end)
-            + (if ($end  |length)>0 then {end_date:$end} else {} end)
+            --arg sd "${{ steps.parse.outputs.short_description }}" \
+            --arg desc "${{ steps.parse.outputs.description }}" \
+            --arg ag "${{ steps.parse.outputs.assignment_group }}" \
+            --arg prio "${{ steps.parse.outputs.priority }}" \
+            --arg start "${{ steps.parse.outputs.planned_start_date }}" \
+            --arg end "${{ steps.parse.outputs.planned_end_date }}" '
+            { short_description: $sd, description: $desc, assignment_group: $ag, priority: $prio }
+            + ( if ($start|length) > 0 then {start_date: $start} else {} end )
+            + ( if ($end|length) > 0 then {end_date: $end} else {} end )
           ')
-
-          echo "Payload to ServiceNow:"; echo "$payload" | jq .
-
+          echo "Payload to ServiceNow:"
+          echo "$payload" | jq .
           http_code=$(curl -sS -o resp.json -w "%{http_code}" \
-            -H "Authorization: Basic ${SN_AUTH}" \
+            -H "Authorization: Basic $SN_AUTH" \
             -H "Content-Type: application/json" \
-            "${SN_INSTANCE}/api/now/table/change_request?sysparm_input_display_value=true" \
-            --data "${payload}")
-
+            "$SN_INSTANCE/api/now/table/change_request?sysparm_input_display_value=true" \
+            --data "$payload")
           if [[ "$http_code" != "200" && "$http_code" != "201" ]]; then
-            echo "::error title=ServiceNow::Failed to create change (HTTP ${http_code})"
-            cat resp.json || true
+            echo "::error title=ServiceNow::Failed to create change (HTTP $http_code)"
+            cat resp.json | jq . || true
             exit 1
           fi
-
-          echo "change_sys_id=$(jq -r '.result.sys_id'  resp.json)" >> "$GITHUB_OUTPUT"
-          echo "change_number=$(jq -r '.result.number'  resp.json)" >> "$GITHUB_OUTPUT"
-
+          change_sys_id=$(jq -r '.result.sys_id' resp.json)
+          change_number=$(jq -r '.result.number' resp.json)
+          echo "change_sys_id=$change_sys_id" >> "$GITHUB_OUTPUT"
+          echo "change_number=$change_number" >> "$GITHUB_OUTPUT"
           {
             echo "### Created Change"
-            echo "- **Number**: ${{ steps.create_change.outputs.change_number }}"
-            echo "- **sys_id**: \`${{ steps.create_change.outputs.change_sys_id }}\`"
+            echo "- **Number**: $change_number"
+            echo "- **sys_id**: \`$change_sys_id\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload attachment.json (if present)
-        if: ${{ steps.parse.outputs.have_attachment == 'true' }}
-        id: upload_attachment
+      - name: Attach attachment.json (if provided)
+        id: attach_json
         shell: bash
         run: |
           set -euo pipefail
-          url="${SN_INSTANCE}/api/now/attachment/file?table_name=change_request&table_sys_id=${{ steps.create_change.outputs.change_sys_id }}&file_name=attachment.json"
-          http_code=$(curl -sS -o attach_resp.json -w "%{http_code}" \
-            -H "Authorization: Basic ${SN_AUTH}" \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/json" \
-            --data-binary "@attachment.json" \
-            "$url")
-          if [[ "$http_code" != "201" && "$http_code" != "200" ]]; then
-            echo "::error title=ServiceNow::Attachment upload failed (HTTP ${http_code})"
-            cat attach_resp.json || true
-            exit 1
+          ATTACH=$(jq -c '.attachment_json // empty' payload.json)
+          if [[ -z "$ATTACH" || "$(jq -r 'type' <<<"$ATTACH")" != "object" || "$(jq -r 'length' <<<"$ATTACH")" -eq 0 ]]; then
+            echo "No attachment_json provided. Skipping."
+            exit 0
           fi
-          echo "✅ Attached JSON to change ${{ steps.create_change.outputs.change_number }}" >> "$GITHUB_STEP_SUMMARY"
-        # ServiceNow Attachment API expects a binary body; JSON content-type is fine for .json files. cite
+          echo "$ATTACH" | jq . > attachment.json
+          http_code=$(curl -sS -o attach_resp.json -w "%{http_code}" \
+            -H "Authorization: Basic $SN_AUTH" \
+            -H "Accept: application/json" \
+            -F "table_name=change_request" \
+            -F "table_sys_id=${{ steps.create_change.outputs.change_sys_id }}" \
+            -F "file=@attachment.json;type=application/json;filename=attachment.json" \
+            "$SN_INSTANCE/api/now/attachment/upload")
+          if [[ "$http_code" != "200" && "$http_code" != "201" ]]; then
+            echo "::warning title=ServiceNow::Failed to upload attachment.json (HTTP $http_code)"
+            cat attach_resp.json || true
+            exit 0
+          fi
+          attachment_sys_id=$(jq -r '.result.sys_id // empty' attach_resp.json)
+          echo "attachment_sys_id=$attachment_sys_id" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Attachment"
+            echo "- Uploaded **attachment.json** (sys_id: \`${attachment_sys_id:-unknown}\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create Change Tasks (if any)
-        if: ${{ steps.parse.outputs.tasks != '[]' }}
         id: create_tasks
         shell: bash
         run: |
           set -euo pipefail
-          COUNT=$(jq 'length' <<< '${{ steps.parse.outputs.tasks }}')
-          if [[ "$COUNT" -eq 0 ]]; then exit 0; fi
-          echo "Creating $COUNT task(s)..."
+          count=$(jq '(.task_descriptions // []) | length' payload.json)
+          if [[ "$count" -eq 0 ]]; then
+            echo "No tasks to create."
+            exit 0
+          fi
+          echo "Creating $count task(s)..."
           CREATED=""
-          for t in $(jq -r '.[]' <<< '${{ steps.parse.outputs.tasks }}' | jq -R .); do
-            task_desc=$(jq -r . <<< "$t")
-            task_payload=$(jq -n --arg sd "$task_desc" --arg cr "${{ steps.create_change.outputs.change_sys_id }}" \
+          for task_desc in $(jq -r '.task_descriptions[]' payload.json | jq -R .); do
+            td=$(jq -r . <<<"$task_desc")
+            task_payload=$(jq -n --arg sd "$td" --arg cr "${{ steps.create_change.outputs.change_sys_id }}" \
               '{ short_description: $sd, change_request: $cr }')
             http_code=$(curl -sS -o task.json -w "%{http_code}" \
-              -H "Authorization: Basic ${SN_AUTH}" \
+              -H "Authorization: Basic $SN_AUTH" \
               -H "Content-Type: application/json" \
-              "${SN_INSTANCE}/api/now/table/change_task?sysparm_input_display_value=true" \
-              --data "${task_payload}")
+              "$SN_INSTANCE/api/now/table/change_task?sysparm_input_display_value=true" \
+              --data "$task_payload")
             if [[ "$http_code" != "200" && "$http_code" != "201" ]]; then
-              echo "::error title=ServiceNow::Failed to create change_task (HTTP ${http_code})"
+              echo "::error title=ServiceNow::Failed to create change_task (HTTP $http_code)"
               cat task.json || true
               exit 1
             fi
             task_number=$(jq -r '.result.number' task.json)
-            CREATED+="- ${task_number}: ${task_desc}\n"
+            CREATED+="- $task_number: $td\n"
           done
-          printf "%b" "$CREATED" > tasks_summary.txt
           {
             echo "### Created Tasks"
             echo -e "$CREATED"
@@ -229,41 +152,34 @@ jobs:
         run: |
           echo "Change: ${{ steps.create_change.outputs.change_number }} (sys_id=${{ steps.create_change.outputs.change_sys_id }})" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Send final log to Port (optional)
+      - name: Send final log to Port
         if: ${{ inputs.port_run_id != '' }}
         shell: bash
         env:
-          RUN_STATUS: ${{ job.status }}
+          PORT_RUN_ID: ${{ inputs.port_run_id }}
+          PORT_CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          PORT_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          PORT_BASE_URL: ${{ vars.PORT_BASE_URL }}
         run: |
           set -euo pipefail
           BASE_URL="${PORT_BASE_URL:-https://api.port.io}"
-          TOKEN="${PORT_JWT_TOKEN:-}"
-
-          # If GUI token not given, use client-credentials
-          if [[ -z "$TOKEN" ]]; then
-            TOKEN=$(curl -sS -X POST \
-              -H "Content-Type: application/json" \
-              -d "{\"clientId\":\"${PORT_CLIENT_ID}\",\"clientSecret\":\"${PORT_CLIENT_SECRET}\"}" \
-              "${BASE_URL}/v1/auth/access_token" | jq -r '.accessToken // empty')
-          fi
-
-          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-            echo "::warning::Port token not available; skipping final log"
-            exit 0
+          TOKEN_RESP=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg id "$PORT_CLIENT_ID" --arg sec "$PORT_CLIENT_SECRET" '{clientId:$id, clientSecret:$sec}')" \
+            "$BASE_URL/v1/auth/access_token")
+          TOKEN_BODY=$(sed '$d' <<< "$TOKEN_RESP")
+          TOKEN_CODE=$(tail -n1 <<< "$TOKEN_RESP")
+          TOKEN=$(jq -r '.accessToken // empty' <<< "$TOKEN_BODY")
+          if [[ "$TOKEN_CODE" != "200" || -z "$TOKEN" ]]; then
+            echo "::error::Failed to obtain Port access token (HTTP $TOKEN_CODE)"
+            exit 1
           fi
           echo "::add-mask::$TOKEN"
-
           STATUS="SUCCESS"; LABEL="COMPLETED"
-          if [[ "${RUN_STATUS}" != "success" ]]; then STATUS="FAILURE"; LABEL="FAILED"; fi
-
-          MSG=$'Workflow completed\n'"Change: ${{ steps.create_change.outputs.change_number }} (sys_id=${{ steps.create_change.outputs.change_sys_id }})"
-          if [[ -f tasks_summary.txt ]]; then
-            MSG+=$'\n'"Tasks created:\n$(cat tasks_summary.txt)"
-          fi
-          MSG+=$'\n'"GitHub Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-
+          if [[ "${{ job.status }}" != "success" ]]; then STATUS="FAILURE"; LABEL="FAILED"; fi
+          MSG=$'Workflow completed\n'"Change: ${{ steps.create_change.outputs.change_number }} (sys_id=${{ steps.create_change.outputs.change_sys_id }})"$'\n'"GitHub Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           curl -sS -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             --data "$(jq -n --arg m "$MSG" --arg t "$STATUS" --arg l "$LABEL" '{message:$m, terminationStatus:$t, statusLabel:$l}')" \
-            "${BASE_URL}/v1/actions/runs/${PORT_RUN_ID}/logs"
+            "$BASE_URL/v1/actions/runs/$PORT_RUN_ID/logs"
