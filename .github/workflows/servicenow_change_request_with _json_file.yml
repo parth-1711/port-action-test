@@ -31,31 +31,44 @@ jobs:
       PORT_RUN_ID:     ${{ inputs.port_run_id }}
 
     steps:
-      - name: Parse single payload
+      - name: Parse single payload (robust)
         id: parse
         shell: bash
         run: |
           set -euo pipefail
+      
           RAW='${{ inputs.payload }}'
-          echo "$RAW" | jq . >/dev/null  # validate
-
-          # Extract basics
-          sd=$(jq -r '.short_description' <<< "$RAW")
-          desc=$(jq -r '.description' <<< "$RAW")
-          ag=$(jq -r '.assignment_group' <<< "$RAW")
-          prio=$(jq -r '.priority' <<< "$RAW")
+      
+          # 1) Ensure it's valid JSON of some type
+          echo "$RAW" | jq . >/dev/null
+      
+          # 2) If RAW is a JSON *string*, decode it once (fromjson) to get the object
+          if jq -e 'type=="string"' >/dev/null 2>&1 <<<"$RAW"; then
+            echo "Payload is a JSON string -> decoding with fromjson"
+            RAW=$(jq -r 'fromjson' <<<"$RAW")
+          fi
+      
+          # 3) Optional: log keys to help debug (without showing secrets)
+          echo "Top-level keys in payload:"
+          echo "$RAW" | jq -r 'keys|.[]' | sed 's/^/- /'
+      
+          # 4) Extract fields
+          sd=$(jq -r '.short_description // empty' <<< "$RAW")
+          desc=$(jq -r '.description // empty' <<< "$RAW")
+          ag=$(jq -r '.assignment_group // empty' <<< "$RAW")
+          prio=$(jq -r '.priority // empty' <<< "$RAW")
           start=$(jq -r '.planned_start_date // empty' <<< "$RAW")
           end=$(jq -r '.planned_end_date // empty' <<< "$RAW")
           tasks=$(jq -c '.task_descriptions // []' <<< "$RAW")
-
-          # attachment_json is an OBJECT; if present, compact to file
+      
+          # attachment_json is an OBJECT; if present, write it to file
           if jq -e '.attachment_json' >/dev/null 2>&1 <<< "$RAW"; then
             jq -c '.attachment_json' <<< "$RAW" > attachment.json
             echo "have_attachment=true" >> "$GITHUB_OUTPUT"
           else
             echo "have_attachment=false" >> "$GITHUB_OUTPUT"
           fi
-
+      
           {
             echo "sd<<EOF";    echo "$sd";    echo "EOF"
             echo "desc<<EOF";  echo "$desc";  echo "EOF"
@@ -65,7 +78,6 @@ jobs:
             echo "end=$end"
             echo "tasks=$tasks"
           } >> "$GITHUB_OUTPUT"
-
       - name: Create Change Request (ServiceNow)
         id: create_change
         shell: bash
