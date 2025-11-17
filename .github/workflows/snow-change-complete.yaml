@@ -1,0 +1,19 @@
+name: SNOW Change Complete Trigger
+
+on:
+  repository_dispatch:
+    types:
+      - snow-change-tasks-complete
+
+jobs:
+  run_on_cr_complete:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Print CR info
+        run: echo "All tasks complete for Change Request: ${{ github.event.client_payload.change_request }}"
+
+      # Run your actual workflow steps here:
+      - name: Run deployment
+        run: |
+          echo "Running deployment pipeline for CR ${{ github.event.client_payload.change_request }}"
