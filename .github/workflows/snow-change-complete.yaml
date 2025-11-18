@@ -2,8 +2,7 @@ name: SNOW Change Complete Trigger
 
 on:
   repository_dispatch:
-    types:
-      - snow-change-tasks-complete
+    types: [snow-change-tasks-complete]
 
 jobs:
   run_on_cr_complete:
@@ -11,7 +10,7 @@ jobs:
 
     steps:
       - name: Print CR info
-        run: echo "All tasks complete for Change Request: ${{ github.event.client_payload.change_request }}"
+        run: echo "All tasks complete for Change Request ${{ github.event.client_payload.change_request }}"
 
       # Run your actual workflow steps here:
       - name: Run deployment
