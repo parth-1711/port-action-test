@@ -17,6 +17,11 @@ jobs:
         run: |
           echo "Running deployment pipeline for CR ${{ github.event.client_payload.change_request }}"
 
+      - name: Set ISO timestamp
+        id: set_timestamp
+        run: echo "iso_time=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
+
       - name: Notify Port of completed change request
         uses: port-labs/port-github-action@v1
         with:
@@ -30,7 +35,7 @@ jobs:
               "changeRequestId": "${{ github.event.client_payload.change_request }}",
               "status": "COMPLETE",
               "workflowRunId": "${{ github.run_id }}",
-              "runTimestamp": "${{ github.run_started_at }}",
+              "runTimestamp": "${{ steps.set_timestamp.outputs.iso_time }}",
               "triggerSource": "ServiceNow",
               "repository": "${{ github.repository }}"
             }
