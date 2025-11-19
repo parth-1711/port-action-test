@@ -20,8 +20,8 @@ jobs:
       - name: Notify Port of completed change request
         uses: port-labs/port-github-action@v1
         with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          clientId: ${{ secrets.CLIENT_ID }}
+          clientSecret: ${{ secrets.CLIENT_SECRET }}
           operation: UPSERT
           identifier: "cr-${{ github.event.client_payload.change_request }}-${{ github.run_id }}"
           blueprint: "change_request_event"
