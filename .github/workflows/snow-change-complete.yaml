@@ -16,3 +16,21 @@ jobs:
       - name: Run deployment
         run: |
           echo "Running deployment pipeline for CR ${{ github.event.client_payload.change_request }}"
+
+      - name: Notify Port of completed change request
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          operation: UPSERT
+          identifier: "cr-${{ github.event.client_payload.change_request }}-${{ github.run_id }}"
+          blueprint: "change_request_event"
+          properties: |
+            {
+              "changeRequestId": "${{ github.event.client_payload.change_request }}",
+              "status": "COMPLETE",
+              "workflowRunId": "${{ github.run_id }}",
+              "runTimestamp": "${{ github.run_started_at }}",
+              "triggerSource": "ServiceNow",
+              "repository": "${{ github.repository }}"
+            }
