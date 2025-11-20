@@ -1,11 +1,11 @@
 on:
   workflow_dispatch:
     inputs:
-      task_number:
+      change_request_number:
         description: "ServiceNow Task Number"
         required: true
-      short_description:
-        description: "Task Description"
+      description:
+        description: "Description"
         required: true
 
 jobs:
@@ -14,5 +14,5 @@ jobs:
     steps:
       - name: Show inputs
         run: |
-          echo "Task number: ${{ github.event.inputs.task_number }}"
+          echo "Change Request number: ${{ github.event.inputs.task_number }}"
           echo "Description: ${{ github.event.inputs.short_description }}"
