@@ -14,5 +14,5 @@ jobs:
     steps:
       - name: Show inputs
         run: |
-          echo "Change Request number: ${{ github.event.inputs.task_number }}"
-          echo "Description: ${{ github.event.inputs.short_description }}"
+          echo "Change Request number: ${{ github.event.inputs.change_request_number }}"
+          echo "Description: ${{ github.event.inputs.description }}"
