@@ -1,0 +1,52 @@
+serviceAction:
+  identifier: create_servicenow_change
+  title: Create ServiceNow Change
+  trigger:
+    type: manual
+  icon: Workflow
+  description: Creates a ServiceNow change and stores the change in Port.
+
+  inputs:
+    - identifier: short_description
+      title: Short Description
+      type: string
+      required: true
+    - identifier: category
+      title: Category
+      type: string
+      required: true
+
+  steps:
+    # STEP 1 — Create ServiceNow Change
+    - identifier: create_change
+      name: Create Change in ServiceNow
+      action:
+        type: http
+        http:
+          method: POST
+          url: https://your-instance.service-now.com/api/now/table/change_request
+          headers:
+            Content-Type: application/json
+            Accept: application/json
+            Authorization: Bearer ${{ integrations.servicenow.token }}
+          body:
+            short_description: ${{ inputs.short_description }}
+            category: ${{ inputs.category }}
+      save_response_as: snResponse
+
+    # STEP 2 — Store Entity in Port
+    - identifier: create_entity_in_port
+      name: Create Port Entity
+      action:
+        type: port
+        port:
+          operation: createEntity
+          entity:
+            identifier: ${{ steps.create_change.snResponse.result.sys_id }}
+            title: "SN Change ${{ steps.create_change.snResponse.result.number }}"
+            blueprint: servicenow_change
+            properties:
+              sys_id: ${{ steps.create_change.snResponse.result.sys_id }}
+              number: ${{ steps.create_change.snResponse.result.number }}
+              short_description: ${{ inputs.short_description }}
+              category: ${{ inputs.category }}
